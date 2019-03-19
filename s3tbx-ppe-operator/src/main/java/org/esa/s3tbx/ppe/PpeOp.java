@@ -19,7 +19,11 @@ package org.esa.s3tbx.ppe;
 
 
 import com.bc.ceres.core.ProgressMonitor;
-import org.esa.snap.core.datamodel.*;
+import org.esa.snap.core.datamodel.Band;
+import org.esa.snap.core.datamodel.FlagCoding;
+import org.esa.snap.core.datamodel.Mask;
+import org.esa.snap.core.datamodel.Product;
+import org.esa.snap.core.datamodel.ProductData;
 import org.esa.snap.core.gpf.Operator;
 import org.esa.snap.core.gpf.OperatorException;
 import org.esa.snap.core.gpf.OperatorSpi;
@@ -28,52 +32,52 @@ import org.esa.snap.core.gpf.annotations.OperatorMetadata;
 import org.esa.snap.core.gpf.annotations.Parameter;
 import org.esa.snap.core.gpf.annotations.SourceProduct;
 import org.esa.snap.core.gpf.annotations.TargetProduct;
+import org.esa.snap.core.util.BitSetter;
 import org.esa.snap.core.util.ProductUtils;
-import org.esa.snap.core.util.SystemUtils;
 import org.esa.snap.core.util.converters.BooleanExpressionConverter;
 
-import java.awt.*;
+import java.awt.Color;
+import java.awt.Rectangle;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  *
- *
  */
 @OperatorMetadata(
-        alias = "PpeOperator",
+        alias = "PpeOp",
         version = "1.1",
         category = "Optical/Preprocessing",
-        description = "Performs Prompt Particle Event (PPE) filtering",
-        authors = " ",
-        copyright = "(c) 2018 by Brockmann Consult GmbH")
+        description = "Performs Prompt Particle Event (PPE) filtering on OLCI L1B",
+        authors = "Juancho Gossn, Roman Shevchuk, Marco Peters",
+        copyright = "(c) 2019 by Brockmann Consult GmbH")
 
 public class PpeOp extends Operator {
 
 
     private static final String VALID_PIXEL_EXPRESSION = "not quality_flags_land";
+    private static final String OLCI_REFLEC_NAME_REGEX = "Oa\\d\\d_radiance";
 
 
-    @SourceProduct(alias = "source", description = "The source product")
+    @SourceProduct(alias = "source", description = "The source product", type = "OL_1_E(F|R)R")
     private Product sourceProduct;
 
     @TargetProduct()
     private Product targetProduct;
 
-    @Parameter(label =  "Filtering cut-off, [mW.m-2.sr-1.nm-1]",defaultValue = "0.7",
-            description = "Minimum threshold to differentiate with the neighboring pixels in [mW.m-2.sr-1.nm-1]")
+    @Parameter(label = "Filtering cut-off", defaultValue = "0.7",
+            description = "Minimum threshold to differentiate with the neighboring pixels")
     private double cutOff;
 
-    @Parameter(label =  "Filtering cut-off, number of Median Absolute Deviation",defaultValue = "10",
+    @Parameter(label = "Filtering cut-off, number of Median Absolute Deviation", defaultValue = "10",
             description = "Multiplier of Median Absolute Deviation used for the threshold.")
     private double numberOfMAD;
 
     @Parameter(label = "Valid pixel expression", description = "An expression to filter which pixel are considered.",
-            converter = BooleanExpressionConverter.class,defaultValue = VALID_PIXEL_EXPRESSION)
+            converter = BooleanExpressionConverter.class, defaultValue = VALID_PIXEL_EXPRESSION)
     private String validExpression;
-
-    @Parameter(label = "Band keyword", description = "An expression which has to be part of band name(s). Case insensitive.",
-            converter = BooleanExpressionConverter.class,defaultValue = "radiance")
-    private String bandKeyword;
 
 
     Mask validPixelMask;
@@ -81,65 +85,82 @@ public class PpeOp extends Operator {
     @Override
     public void initialize() throws OperatorException {
         validPixelMask = Mask.BandMathsType.create("__valid_pixel_mask", null,
-                getSourceProduct().getSceneRasterWidth(),
-                getSourceProduct().getSceneRasterHeight(),
-                validExpression,
-                Color.GREEN, 0.0);
+                                                   getSourceProduct().getSceneRasterWidth(),
+                                                   getSourceProduct().getSceneRasterHeight(),
+                                                   validExpression,
+                                                   Color.GREEN, 0.0);
         validPixelMask.setOwner(getSourceProduct());
 
         createTargetProduct();
     }
 
     @Override
-    public void computeTile(Band targetBand, Tile targetTile, ProgressMonitor pm) throws OperatorException {
-        Rectangle targetRectangle = targetTile.getRectangle();
+    public void computeTileStack(Map<Band, Tile> targetTiles, Rectangle targetRectangle, ProgressMonitor pm) throws OperatorException {
+
+        Map<Band, Tile> internalTargetTiles = new HashMap<>(targetTiles);
+        Tile flagTile = internalTargetTiles.remove(targetProduct.getRasterDataNode("ppe_flags"));
+        Tile landTile = getSourceTile(validPixelMask, targetRectangle);
         Tile sourceTile;
-        if (!targetBand.getName().toLowerCase().contains("_ppe_flag")) {
-            Tile flagTile = getSourceTile(targetProduct.getRasterDataNode(targetBand.getName()+"_ppe_flag"), targetRectangle);
-            sourceTile = getSourceTile(sourceProduct.getRasterDataNode(targetBand.getName()), targetRectangle);
-            Tile landTile=getSourceTile(validPixelMask, targetRectangle);
-            for (int y = targetRectangle.y; y < targetRectangle.y + targetRectangle.height; y++) {
+        pm.beginTask("Processing PPE", internalTargetTiles.size());
+        try {
+            for (Map.Entry<Band, Tile> entry : internalTargetTiles.entrySet()) {
                 checkForCancellation();
-                for (int x = targetRectangle.x; x < targetRectangle.x + targetRectangle.width; x++) {
-                    double pixel = sourceTile.getSampleDouble(x, y);
-                    if (pixel > 0 && (landTile.getSampleBoolean(x, y) == true)) {
-                        double[] pixelList = getPixelList(x, y, sourceTile);
-                        double median = getMedian(pixelList);
-                        double MAD = getMAD(pixelList);
-                        setBandTile(x, y, median, MAD, sourceTile, targetTile);
-                        setFlagBandTile(x, y, median, MAD, sourceTile, flagTile);
-                    } else {
-                            targetTile.setSample(x, y, pixel);
+                Band targetBand = entry.getKey();
+                Tile targetTile = entry.getValue();
+
+                sourceTile = getSourceTile(sourceProduct.getRasterDataNode(targetBand.getName()), targetRectangle);
+                for (int y = targetRectangle.y; y < targetRectangle.y + targetRectangle.height; y++) {
+                    checkForCancellation();
+                    for (int x = targetRectangle.x; x < targetRectangle.x + targetRectangle.width; x++) {
+                        double reflecValue = sourceTile.getSampleDouble(x, y);
+                        if (reflecValue > 0 && landTile.getSampleBoolean(x, y)) {
+                            double[] pixelList = getPixelList(x, y, sourceTile);
+                            double median = getMedian(pixelList);
+                            double mad = getMAD(pixelList);
+                            setBandTile(x, y, median, mad, reflecValue, targetTile);
+                            setFlagBandTile(x, y, median, mad, reflecValue, targetBand.getSpectralBandIndex(), flagTile);
+                        } else {
+                            targetTile.setSample(x, y, reflecValue);
+                        }
                     }
                 }
+                pm.worked(1);
             }
+        } finally {
+            pm.done();
         }
     }
 
-    private void createTargetProduct()  {
-        targetProduct = new Product(sourceProduct.getName(), sourceProduct.getProductType(), sourceProduct.getSceneRasterWidth(), sourceProduct.getSceneRasterHeight());
+    private void createTargetProduct() {
+        targetProduct = new Product(sourceProduct.getName(), sourceProduct.getProductType(),
+                                    sourceProduct.getSceneRasterWidth(),
+                                    sourceProduct.getSceneRasterHeight());
 
         final FlagCoding flagCoding = new FlagCoding("ppe_applied");
-        flagCoding.addFlag("PPE applied",1,"PPE applied");
-        flagCoding.setDescription("PPE proccesor flag");
+        flagCoding.setDescription("PPE processor flag");
         targetProduct.getFlagCodingGroup().add(flagCoding);
 
+        Pattern compile = Pattern.compile(OLCI_REFLEC_NAME_REGEX);
         for (Band band : sourceProduct.getBands()) {
-            if (band.getName().toLowerCase().contains(bandKeyword.toLowerCase()) && (band.getSpectralWavelength()!=0.0f)){
-                ProductUtils.copyBand(band.getName(), sourceProduct, targetProduct, false);
-                if (!"mW.m-2.sr-1.nm-1".equals(band.getUnit())){
-                    SystemUtils.LOG.warning("The units of "+band.getName()+" are not mW.m-2.sr-1.nm-1. Changing cut-off parameter is suggested.");
-                }
-                Band ppeBand = new Band(band.getName()+"_ppe_flag", ProductData.TYPE_INT8,sourceProduct.getSceneRasterWidth(),sourceProduct.getSceneRasterHeight());
-                ppeBand.setSampleCoding(flagCoding);
-
-                targetProduct.addBand(ppeBand);
-            }
-            else{
-                ProductUtils.copyBand(band.getName(), sourceProduct, targetProduct, true);
+            String bandName = band.getName();
+            if (compile.matcher(bandName).matches()) {
+                ProductUtils.copyBand(bandName, sourceProduct, targetProduct, false);
+                int flagIndex = BitSetter.setFlag(0, band.getSpectralBandIndex());
+                flagCoding.addFlag("PPE_" + bandName, flagIndex, "PPE applied on " + bandName);
+            } else {
+                ProductUtils.copyBand(bandName, sourceProduct, targetProduct, true);
             }
         }
 
+
+        Band ppeFlags = new Band("ppe_flags", ProductData.TYPE_UINT32,
+                                 sourceProduct.getSceneRasterWidth(),
+                                 sourceProduct.getSceneRasterHeight());
+        ppeFlags.setSampleCoding(flagCoding);
+        // todo
+        // add masks which uses expression 'ppe_flags != 0'
+
+        targetProduct.addBand(ppeFlags);
         ProductUtils.copyMetadata(sourceProduct, targetProduct);
         ProductUtils.copyTiePointGrids(sourceProduct, targetProduct);
         ProductUtils.copyMasks(sourceProduct, targetProduct);
@@ -147,21 +168,18 @@ public class PpeOp extends Operator {
         ProductUtils.copyGeoCoding(sourceProduct, targetProduct);
     }
 
-    void setBandTile(int x, int y,double median,double MAD, Tile sourceTile, Tile targetTile){
-        double pixel = sourceTile.getSampleDouble(x, y);
-        if (Math.abs(pixel - median) > cutOff && Math.abs(pixel - median) > (numberOfMAD * MAD)) {
+    void setBandTile(int x, int y, double median, double mad, double reflecValue, Tile targetTile) {
+        if (Math.abs(reflecValue - median) > cutOff && Math.abs(reflecValue - median) > (numberOfMAD * mad)) {
             targetTile.setSample(x, y, median);
-        }
-        else{
-            targetTile.setSample(x, y, pixel);
+        } else {
+            targetTile.setSample(x, y, reflecValue);
         }
     }
 
 
-    void setFlagBandTile(int x, int y,double median,double MAD, Tile sourceTile, Tile targetTile){
-        double pixel = sourceTile.getSampleDouble(x, y);
-        if (Math.abs(pixel - median) > cutOff && Math.abs(pixel - median) > (numberOfMAD * MAD)) {
-            targetTile.setSample(x, y, 1);
+    void setFlagBandTile(int x, int y, double median, double mad, double reflecValue, int bandIndex, Tile targetTile) {
+        if (Math.abs(reflecValue - median) > cutOff && Math.abs(reflecValue - median) > (numberOfMAD * mad)) {
+            targetTile.setSample(x, y, bandIndex, true);
         }
     }
 
@@ -174,14 +192,14 @@ public class PpeOp extends Operator {
         pixelList[3] = getPixelValue(sourceTile, x, y + 1);
         pixelList[4] = getPixelValue(sourceTile, x, y + 2);
         Arrays.sort(pixelList);
-        if (pixelList[0]<0){
-            throw new OperatorException("Radiance bands contain values lower than zero at x="+x+" y="+y);
+        if (pixelList[0] < 0) {
+            throw new OperatorException("Radiance bands contain values lower than zero at x=" + x + " y=" + y);
         }
         return pixelList;
     }
 
-     static Double getPixelValue(Tile tile, int x, int y) {
-        if ( (0 <= y) && (y < tile.getHeight())) {
+    static Double getPixelValue(Tile tile, int x, int y) {
+        if ((y >= tile.getMinY()) && (y <= tile.getMaxY())) {
             return tile.getSampleDouble(x, y);
         } else {
             return 0d;
@@ -190,9 +208,9 @@ public class PpeOp extends Operator {
 
     static Double getMedian(double[] listDoubles) {
         Arrays.sort(listDoubles);
-        if (listDoubles[1]==0) {
+        if (listDoubles[1] == 0) {
             return (listDoubles[3]);
-        } else if (listDoubles[0]==0) {
+        } else if (listDoubles[0] == 0) {
             return ((listDoubles[2] + listDoubles[3]) / 2);
         } else {
             return (listDoubles[2]);
@@ -210,22 +228,20 @@ public class PpeOp extends Operator {
             }
         }
         Arrays.sort(listMAD);
-        if (listMAD[1]==-1) {
+        if (listMAD[1] == -1) {
             return listMAD[3];
-        }
-        else if (listMAD[0]==-1){
-            return (listMAD[2]+listMAD[3])/2;
-        }
-        else {
+        } else if (listMAD[0] == -1) {
+            return (listMAD[2] + listMAD[3]) / 2;
+        } else {
             return listMAD[2];
         }
     }
 
 
     public static class Spi extends OperatorSpi {
+
         public Spi() {
             super(PpeOp.class);
         }
     }
 }
-

@@ -5,11 +5,11 @@
             <file name="org-esa-s3tbx-PpeOpAction.instance">
                 <attr name="instanceCreate" methodvalue="org.openide.awt.Actions.alwaysEnabled"/>
                 <attr name="delegate" methodvalue="org.esa.snap.core.gpf.ui.DefaultOperatorAction.create"/>
-                <attr name="displayName" stringvalue="Ppe Operator"/>
-                <attr name="dialogTitle" stringvalue="Ppe Operator"/>
-                <attr name="operatorName" stringvalue="PpeOperator"/>
+                <attr name="displayName" stringvalue="OLCI PPE Operator"/>
+                <attr name="dialogTitle" stringvalue="OLCI PPE Operator"/>
+                <attr name="operatorName" stringvalue="PpeOp"/>
                 <attr name="helpId" stringvalue="PpeTool"/>
-                <attr name="targetProductNameSuffix" stringvalue="_Ppe"/>
+                <attr name="targetProductNameSuffix" stringvalue="_ppe"/>
             </file>
         </folder>
     </folder>
