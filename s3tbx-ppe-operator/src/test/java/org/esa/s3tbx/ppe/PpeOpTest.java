@@ -19,27 +19,23 @@ import static org.junit.Assert.*;
 
 
 
-@Ignore
 public class PpeOpTest {
 
-    private static final float[] MERIS_WAVELENGTHS = new float[]{412, 442, 490, 510, 560, 620, 665, 681, 709, 754, 761, 779, 865, 885, 900};
     private String TESTFILENAME ="ppetest.dim";
     private String TESTFILENAME2 ="ppetest2.dim";
 
     @Test
-    public void testPpeOp()  {
+    public void testPpeOp() throws IOException  {
         Operator ppeOp = new PpeOp();
-        ppeOp.setSourceProduct(createSourceProduct());
+        String testFilePath = PpeOpTest.class.getResource(TESTFILENAME).getFile();
+        Product sourceProduct = ProductIO.readProduct(testFilePath);
+        ppeOp.setSourceProduct(sourceProduct);
         Product targetProduct = ppeOp.getTargetProduct();
 
-        assertEquals(MERIS_WAVELENGTHS.length*2+1,targetProduct.getNumBands());
-        assertTrue(targetProduct.containsBand("radiance3_ppe_flag"));
-        assertTrue(targetProduct.containsBand("radiance8_ppe_flag"));
-        assertTrue(targetProduct.containsBand("radiance8"));
-        assertTrue(targetProduct.containsBand("anotherBand"));
-        assertTrue(!targetProduct.containsBand("anotherBand_ppe_flag"));
-        assertTrue(targetProduct.getBand("radiance3_ppe_flag").isFlagBand());
-        assertEquals("radiance1_ppe_flag.PPE applied",targetProduct.getAllFlagNames()[0]);
+        assertEquals(93,targetProduct.getNumBands());
+        assertTrue(targetProduct.containsBand("ppe_flags"));
+        assertTrue(targetProduct.getBand("ppe_flags").isFlagBand());
+        assertEquals("ppe_flags.PPE_Oa09_radiance",targetProduct.getAllFlagNames()[40]);
     }
 
     @Test
@@ -122,33 +118,33 @@ public class PpeOpTest {
         ppeOp.setParameterDefaultValues();
         Product result = ppeOp.getTargetProduct();
         result.getBand("Oa10_radiance").readRasterDataFully();
-        result.getBand("Oa10_radiance_ppe_flag").readRasterDataFully();
+        result.getBand("ppe_flags").readRasterDataFully();
 
-        assertEquals(113, result.getNumBands());
+        assertEquals(93, result.getNumBands());
         assertEquals(20, result.getSceneRasterHeight());
         assertEquals(20, result.getSceneRasterWidth());
         assertEquals(13.20930, result.getBand("Oa10_radiance").getPixelDouble(0, 3), 1e-5);
         assertEquals(13.20930, result.getBand("Oa10_radiance").getPixelDouble(0, 4), 1e-5);
         assertEquals(13.10102, result.getBand("Oa10_radiance").getPixelDouble(7, 9), 1e-5);
-        assertEquals(1, result.getBand("Oa10_radiance_ppe_flag").getPixelDouble(0, 3), 1e-5);
-        assertEquals(0, result.getBand("Oa10_radiance_ppe_flag").getPixelDouble(0, 4), 1e-5);
-        assertEquals(1, result.getBand("Oa10_radiance_ppe_flag").getPixelDouble(6, 9), 1e-5);
-        assertEquals(1, result.getBand("Oa10_radiance_ppe_flag").getPixelDouble(18, 6), 1e-5);
-        assertEquals(0, result.getBand("Oa10_radiance_ppe_flag").getPixelDouble(19, 19), 1e-5);
+        assertEquals(1306560, result.getBand("ppe_flags").getPixelDouble(0, 3), 1e-5);
+        assertEquals(0, result.getBand("ppe_flags").getPixelDouble(0, 4), 1e-5);
+        assertEquals(249728, result.getBand("ppe_flags").getPixelDouble(6, 9), 1e-5);
+        assertEquals(519872, result.getBand("ppe_flags").getPixelDouble(18, 6), 1e-5);
+        assertEquals(0, result.getBand("ppe_flags").getPixelDouble(19, 19), 1e-5);
 
     }
 
     @Test
     public void testLandTransform() throws IOException {
         Operator ppeOp = new PpeOp();
-        String testFilePath = PpeOpTest.class.getResource("ppetest2.dim").getFile();
+        String testFilePath = PpeOpTest.class.getResource(TESTFILENAME2).getFile();
         Product product = ProductIO.readProduct(testFilePath);
         ppeOp.setSourceProduct(product);
         ppeOp.setParameterDefaultValues();
         Product result = ppeOp.getTargetProduct();
         result.getBand("Oa10_radiance").readRasterDataFully();
         result.getBand("Oa01_radiance").readRasterDataFully();
-        result.getBand("Oa01_radiance_ppe_flag").readRasterDataFully();
+        result.getBand("ppe_flags").readRasterDataFully();
 
         assertEquals(40, result.getSceneRasterHeight());
         assertEquals(40, result.getSceneRasterWidth());
@@ -157,24 +153,10 @@ public class PpeOpTest {
         assertEquals(53.10787, result.getBand("Oa10_radiance").getPixelDouble(6, 8), 1e-5);
         assertEquals(52.96093, result.getBand("Oa10_radiance").getPixelDouble(5, 7), 1e-5);
         assertEquals(76.95656, result.getBand("Oa01_radiance").getPixelDouble(26, 0), 1e-5);
-        assertEquals(1, result.getBand("Oa01_radiance_ppe_flag").getPixelDouble(26, 0), 1e-5);
-        assertEquals(1, result.getBand("Oa01_radiance_ppe_flag").getPixelDouble(27, 0), 1e-5);
-        assertEquals(0, result.getBand("Oa01_radiance_ppe_flag").getPixelDouble(25, 0), 1e-5);
+        assertEquals(2049, result.getBand("ppe_flags").getPixelDouble(26, 0), 1e-5);
+        assertEquals(2049, result.getBand("ppe_flags").getPixelDouble(27, 0), 1e-5);
+        assertEquals(2096128, result.getBand("ppe_flags").getPixelDouble(25, 0), 1e-5);
+        assertEquals(0, result.getBand("ppe_flags").getPixelDouble(34, 22), 1e-5);
 
-    }
-
-    private Product createSourceProduct() {
-        Product product = new Product("OWT_Input", "OL2_WFR", 10, 10);
-        for (int i = 0; i < MERIS_WAVELENGTHS.length; i++) {
-            Band reflecBand = product.addBand("radiance" + (i + 1), ProductData.TYPE_FLOAT32);
-            reflecBand.setSpectralWavelength(MERIS_WAVELENGTHS[i]);
-            reflecBand.setSpectralBandwidth(10);
-            reflecBand.setUnit("mW.m-2.sr-1.nm-1");
-        }
-        Band anotherBand = product.addBand("anotherBand", ProductData.TYPE_FLOAT32);
-        anotherBand.setSpectralWavelength(10000);
-        anotherBand.setSpectralBandwidth(10);
-
-        return product;
     }
 }
