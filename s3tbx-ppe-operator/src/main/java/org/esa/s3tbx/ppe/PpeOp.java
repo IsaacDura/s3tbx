@@ -157,8 +157,8 @@ public class PpeOp extends Operator {
                                  sourceProduct.getSceneRasterWidth(),
                                  sourceProduct.getSceneRasterHeight());
         ppeFlags.setSampleCoding(flagCoding);
-        // todo
-        // add masks which uses expression 'ppe_flags != 0'
+
+        targetProduct.addMask("PPE_operator_applied",  "ppe_flags", "", Color.BLUE, 0.5);
 
         targetProduct.addBand(ppeFlags);
         ProductUtils.copyMetadata(sourceProduct, targetProduct);
