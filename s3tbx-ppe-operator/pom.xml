@@ -27,7 +27,7 @@
     </parent>
 
     <artifactId>s3tbx-ppe-operator</artifactId>
-    <name>Prompt Particle Events Processor</name>
+    <name>OLCI PPE Filtering</name>
     <packaging>nbm</packaging>
     <description>SNAP operator implementing an algorithm for detection and removal of Prompt Particle Events.
     </description>

@@ -47,7 +47,7 @@ import java.util.regex.Pattern;
  *
  */
 @OperatorMetadata(
-        alias = "PpeOp",
+        alias = "PpeFiltering",
         version = "1.1",
         category = "Optical/Preprocessing",
         description = "Performs Prompt Particle Event (PPE) filtering on OLCI L1B",
@@ -136,7 +136,7 @@ public class PpeOp extends Operator {
                                     sourceProduct.getSceneRasterWidth(),
                                     sourceProduct.getSceneRasterHeight());
 
-        final FlagCoding flagCoding = new FlagCoding("ppe_applied");
+        final FlagCoding flagCoding = new FlagCoding("PPE_Applied");
         flagCoding.setDescription("PPE processor flag");
         targetProduct.getFlagCodingGroup().add(flagCoding);
 
@@ -145,8 +145,8 @@ public class PpeOp extends Operator {
             String bandName = band.getName();
             if (compile.matcher(bandName).matches()) {
                 ProductUtils.copyBand(bandName, sourceProduct, targetProduct, false);
-                int flagIndex = BitSetter.setFlag(0, band.getSpectralBandIndex());
-                flagCoding.addFlag("PPE_" + bandName, flagIndex, "PPE applied on " + bandName);
+                int flagMask = BitSetter.setFlag(0, band.getSpectralBandIndex());
+                flagCoding.addFlag("PPE_" + bandName, flagMask, "PPE applied on " + bandName);
             } else {
                 ProductUtils.copyBand(bandName, sourceProduct, targetProduct, true);
             }
@@ -158,7 +158,8 @@ public class PpeOp extends Operator {
                                  sourceProduct.getSceneRasterHeight());
         ppeFlags.setSampleCoding(flagCoding);
 
-        targetProduct.addMask("PPE_operator_applied",  "ppe_flags", "", Color.BLUE, 0.5);
+        targetProduct.addMask("PPE_operator_applied",  "ppe_flags",
+                              "PPE operator has been applied on one of the spectral bands", Color.BLUE, 0.5);
 
         targetProduct.addBand(ppeFlags);
         ProductUtils.copyMetadata(sourceProduct, targetProduct);
